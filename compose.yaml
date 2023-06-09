@@ -1,0 +1,24 @@
+# -*- coding: utf-8 -*-
+services:
+  app:
+    build:
+      context: .
+    image: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_NAME
+    restart: always
+    command: gunicorn --bind 0.0.0.0:80 --timeout ${TIMEOUT:-55} main:app
+    volumes:
+    - ./.env:/app/.env
+#    ports:
+#      - "9655:80"
+    env_file:
+      - .env
+    networks:
+      default:
+        ipv4_address: $IP_ADDRESS
+
+networks:
+  default:
+    ipam:
+      driver: default
+      config:
+      - subnet: $NETWORK
