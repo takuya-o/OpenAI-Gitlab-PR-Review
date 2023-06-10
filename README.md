@@ -1,6 +1,6 @@
 # AI Code Reviewer
 
-AI Code Reviewer is a Python script that leverages OpenAI's GPT-3.5-turbo to automatically review code changes in GitLab repositories. It listens for merge request and push events, fetches the associated code changes, and provides feedback on the changes in a Markdown format.
+AI Code Reviewer is a Python script that leverages OpenAI's GPT-3.5-turbo to automatically review code changes in GitLab repositories. It listens for push events, fetches the associated code changes, and provides feedback on the changes in a Markdown format.
 
 ## Features
 
@@ -21,8 +21,8 @@ AI Code Reviewer is a Python script that leverages OpenAI's GPT-3.5-turbo to aut
 
 1. Clone the repository:
 ```
-https://git.facha.dev/facha/openai-gitlab-pr-review.git
-cd ai-code-reviewer
+git https://github.com/takuya-o/OpenAI-Gitlab-PR-Review.git
+cd OpenAI-Gitlab-PR-Review
 ```
 
 2. Install the required Python packages:
@@ -49,16 +49,16 @@ Alternatively, you can use Docker to run the application:
 
 1. Build the Docker image:
 ```
-docker-compose build
+docker compose build
 ```
 2. Run the Docker container:
 ```
-docker-compose up -d
+docker compose up -d
 ```
 
 
 ## Usage
 
-1. Configure your GitLab repository to send webhook events to the AI Code Reviewer application by following [GitLab's webhook documentation](https://docs.gitlab.com/ee/user/project/integrations/webhooks.html).
+1. Configure your GitLab repository to send webhook events to the AI Code Reviewer application by following [GitLab's webhook documentation](https://docs.gitlab.com/ee/user/project/integrations/webhooks.html). Check only "Push Hook".
 
 2. The AI Code Reviewer application will automatically review code changes in your GitLab repository and provide feedback as comments on merge requests and commit diffs.
