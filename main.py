@@ -9,7 +9,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "WARNING"))
 logger = logging.getLogger(__name__)
 
 tiktoken_enc = tiktoken.encoding_for_model("gpt-3.5-turbo")
-MAX_TOKEN = 1024 * 3
+MAX_TOKEN = int(os.environ.get("OPENAI_API_TOKEN_LIMIT") or (1024 * 3))
 
 STATUS_CODE = {
     "BAD_GATEWAY": 502,
