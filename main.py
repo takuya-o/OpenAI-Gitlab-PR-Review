@@ -52,31 +52,35 @@ def webhook():
     payload = request.json
     logger.info(payload)
     headers = {"Private-Token": gitlab_token}
-    if request.headers.get("X-Gitlab-Event") == "Push Hook":
-        logger.info("Push Hook")
-        t = Thread(target=handle_push_hook, args=(payload, headers))
+    event_handlers = {
+        "Push Hook": handle_push_hook,
+        "Note Hook": handle_note_hook  # assuming handle_note_hook is a function similar to handle_push_hook
+    }
+    event_type = request.headers.get("X-Gitlab-Event")
+    handler = event_handlers.get(event_type)
+    if handler is not None:
+        t = Thread(target=handler, args=(payload, headers))
         t.start()
-    elif request.headers.get("X-Gitlab-Event") == "Note Hook":
-        # https://docs.gitlab.com/ee/user/project/integrations/webhook_events.html#comment-events
-        logger.info("Comment Hook")
-        if payload["object_attributes"]["noteable_type"] == "Commit":
-            logger.info("Comment for commit")
-            note = payload["object_attributes"]["note"]
-            # noteが"@ChatGPT "で始まっている場合 含まれているだと引用とかで引っかかりそうなので。
-            if note.startswith("@chatgpt "):
-                t = Thread(target=handle_commit_comment_hook, args=(note, payload, headers))
-                t.start()
-            else:
-                logger.info("Not for @chatgpt comment")
-        else:
-            logger.info("Not comment for commit")
     else:
-        logger.error("Not supported event: " + request.headers.get("X-Gitlab-Event"))
-        return "Not supported event: " + request.headers.get("X-Gitlab-Event"), STATUS_CODE["BAD_REQUEST"]
-
+        logger.error("Not supported event: " + event_type)
+        return "Not supported event: " + event_type, STATUS_CODE["BAD_REQUEST"]
     return "OK", STATUS_CODE["OK"]
 
-def handle_commit_comment_hook(note, payload, headers):
+def handle_note_hook(payload, headers):
+    logger.info("Comment Hook")
+    if payload["object_attributes"]["noteable_type"] != "Commit":
+        # Commitのコメントではない場合には何もしない
+        logger.info("Not comment for commit")
+        return
+    else:
+        note = payload["object_attributes"]["note"]
+        if not note.startswith("@chatgpt "):
+            # noteが"@chatgpt "で始まっていない場合は何もしない
+            logger.info("Not for @chatgpt comment")
+            return
+    # commitに対するコメントで"@chatgpt "で始まっている
+    logger.info("Commit Comment for @chatgpt")
+    # https://docs.gitlab.com/ee/user/project/integrations/webhook_events.html#comment-events
     project_id = payload["project_id"]
     commit_id = payload["commit"]["id"]
     commit_url = f"{gitlab_url}/projects/{project_id}/repository/commits/{commit_id}/diff"
@@ -97,11 +101,12 @@ def handle_commit_comment_hook(note, payload, headers):
             comment_url = f"{gitlab_url}/projects/{project_id}/repository/commits/{commit_id}/comments"
             comment_payload = {"note": answer}
         comment_response = requests.post(comment_url, headers=headers, json=comment_payload)
-        logger.info("GitLab comment POST Response: " + comment_response.text)
+        log_gitlab_response(comment_response) # エラーでも気にしない
     else:
         logger.info(msg)
 
 def handle_push_hook(payload, headers):
+    logger.info("Push Hook")
     project_id = payload["project_id"]
     for commit in payload["commits"]:
         commit_id = commit["id"]
@@ -121,9 +126,13 @@ def handle_push_hook(payload, headers):
             comment_url = f"{gitlab_url}/projects/{project_id}/repository/commits/{commit_id}/comments"
             comment_payload = {"note": answer}
             comment_response = requests.post(comment_url, headers=headers, json=comment_payload)
+            log_gitlab_response(comment_response) # エラーでも気にしない
         else:
             logger.info(msg)
             continue  # Error or No Content
+
+def log_gitlab_response(comment_response):
+    logger.info("GitLab comment POST Response: " + comment_response.text)
 
 def check_changes(changes, commit_url):
     logger.debug(changes)
