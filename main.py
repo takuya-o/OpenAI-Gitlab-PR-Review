@@ -1,10 +1,12 @@
 import os
 import json
+from threading import Thread
 import requests
 from flask import Flask, request
 import openai
 import tiktoken
 import logging
+
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "WARNING"))
 logger = logging.getLogger(__name__)
 
@@ -51,12 +53,53 @@ def webhook():
     logger.info(payload)
     headers = {"Private-Token": gitlab_token}
     if request.headers.get("X-Gitlab-Event") == "Push Hook":
-        handle_push_hook(payload, headers)
+        logger.info("Push Hook")
+        t = Thread(target=handle_push_hook, args=(payload, headers))
+        t.start()
+    elif request.headers.get("X-Gitlab-Event") == "Note Hook":
+        # https://docs.gitlab.com/ee/user/project/integrations/webhook_events.html#comment-events
+        logger.info("Comment Hook")
+        if payload["object_attributes"]["noteable_type"] == "Commit":
+            logger.info("Comment for commit")
+            note = payload["object_attributes"]["note"]
+            # noteが"@ChatGPT "で始まっている場合 含まれているだと引用とかで引っかかりそうなので。
+            if note.startswith("@chatgpt "):
+                t = Thread(target=handle_commit_comment_hook, args=(note, payload, headers))
+                t.start()
+            else:
+                logger.info("Not for @chatgpt comment")
+        else:
+            logger.info("Not comment for commit")
     else:
         logger.error("Not supported event: " + request.headers.get("X-Gitlab-Event"))
         return "Not supported event: " + request.headers.get("X-Gitlab-Event"), STATUS_CODE["BAD_REQUEST"]
 
     return "OK", STATUS_CODE["OK"]
+
+def handle_commit_comment_hook(note, payload, headers):
+    project_id = payload["project_id"]
+    commit_id = payload["commit"]["id"]
+    commit_url = f"{gitlab_url}/projects/{project_id}/repository/commits/{commit_id}/diff"
+    response = requests.get(commit_url, headers=headers)
+    changes = response.json()
+    msg = check_changes(changes, commit_url)
+    if msg == "":
+        answer = chatComplitionDiffs(changes) # 何を聞いてもDiffのコードレビューだけ
+        if payload["object_attributes"]["type"] == "DiscussionNote":
+            # "type": "DiscussionNote" の場合はディスカッションに追加する
+            # https://docs.gitlab.com/ee/api/discussions.html#add-note-to-existing-commit-thread
+            discussion_id = payload['object_attributes']['discussion_id']
+            comment_url = f"{gitlab_url}/projects/{project_id}/repository/commits/{commit_id}/discussions/{discussion_id}/notes"
+            comment_payload = {"body": answer }
+        else:
+            # 普通のcommitに対するコメントなので、普通にコメントする
+            # https://docs.gitlab.com/ee/api/commits.html#post-comment-to-commit
+            comment_url = f"{gitlab_url}/projects/{project_id}/repository/commits/{commit_id}/comments"
+            comment_payload = {"note": answer}
+        comment_response = requests.post(comment_url, headers=headers, json=comment_payload)
+        logger.info("GitLab comment POST Response: " + comment_response.text)
+    else:
+        logger.info(msg)
 
 def handle_push_hook(payload, headers):
     project_id = payload["project_id"]
@@ -144,7 +187,7 @@ def chatComplitionDiffs(changes):
     messages = [
             {"role": "system", "content": "You are a senior developer reviewing code changes."},
             {"role": "user", "content": f"{pre_prompt}\n\n{''.join(diffs)}{questions}"},
-            {"role": "assistant", "content": "Format the response so it renders nicely in GitLab, with nice and organized markdown (use code blocks if needed), and send just the response no comments on the request, when answering include a short version of the question, so we know what it is. In addtion Japanese translations must be added at the end."},
+            {"role": "assistant", "content": "Format the response so it renders nicely in GitLab, with nice and organized markdown (use code blocks if needed), and send just the response no comments on the request, when answering include a short version of the question, so we know what it is. Finally, translate all responses into Japanese."},
         ]
     logger.info(messages)
     try:
