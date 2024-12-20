@@ -7,10 +7,12 @@ import openai
 import tiktoken
 import logging
 
+DEFAULT_MODEL = "gpt-4o-mini"
+
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "WARNING"))
 logger = logging.getLogger(__name__)
 
-tiktoken_enc = tiktoken.encoding_for_model("gpt-3.5-turbo")
+tiktoken_enc = tiktoken.encoding_for_model(os.environ.get("OPENAI_API_MODEL") or DEFAULT_MODEL)
 MAX_TOKEN = int(os.environ.get("OPENAI_API_TOKEN_LIMIT") or (1024 * 3))
 
 STATUS_CODE = {
@@ -108,7 +110,12 @@ def handle_note_hook(payload, headers):
 def handle_push_hook(payload, headers):
     logger.info("Push Hook")
     project_id = payload["project_id"]
-    for commit in payload["commits"]:
+    commits = payload["commits"] or []
+    if len(commits) == 0:
+        # failsafe Commitのコメントではない場合には何もしない
+        logger.info("Not comment for commit")
+        return
+    for commit in commits:
         commit_id = commit["id"]
         commit_url = f"{gitlab_url}/projects/{project_id}/repository/commits/{commit_id}/diff"
         title = commit["title"]
@@ -178,7 +185,7 @@ def chatComplitionDiffs(changes):
     sum_token = 0
     for change in changes:
         file_name = change.get("new_path")
-        if check_file_type(file_name) or file_name in "-lock.":
+        if check_file_type(file_name) or "-lock." in file_name:
             logger.info(f"SKIP: {file_name}")
             continue
         diff = change.get("diff")
@@ -190,27 +197,53 @@ def chatComplitionDiffs(changes):
         diffs.append(diff)
         sum_token += count
 
-    pre_prompt = "As a senior developer, review the following code changes and answer code review questions about them. The code changes are provided as git diff strings:"
-    questions = "\n\nQuestions:\n1. Can you summarise the changes in a succinct bullet point list, as a separate section in a Changelog like manner\n2. In the diff, are the added or changed code written in a clear and easy to understand way?\n3. Does the code use comments, or descriptive function and variables names that explain what they mean?\n4. based on the code complexity of the changes, could the code be simplified without breaking its functionality? if so can you give example snippets?\n5. Can you find any bugs, if so please explain and reference line numbers?\n6. Do you see any code that could induce security issues?\n"
+    #pre_prompt = "Review the following git diff code changes, focusing on structure, security, and clarity."
+    pre_prompt = "Review the git diff of a recent commit, focusing on clarity, structure, and security."
+
+    # questions = """
+    # Questions:
+    # 1. Summarize key changes.
+    # 2. Is the new/modified code clear?
+    # 3. Are comments and names descriptive?
+    # 4. Can complexity be reduced? Examples?
+    # 5. Any bugs? Where?
+    # 6. Potential security issues?
+    # 7. Suggestions for best practices alignment?
+    # """
+    questions = """
+    Questions:
+    1. Summarize changes (Changelog style).
+    2. Clarity of added/modified code?
+    3. Comments and naming adequacy?
+    4. Simplification without breaking functionality? Examples?
+    5. Any bugs? Where?
+    6. Potential security issues?
+    7. Suggestions for best practices alignment?
+    """
 
     messages = [
-            {"role": "system", "content": "You are a senior developer reviewing code changes."},
-            {"role": "user", "content": f"{pre_prompt}\n\n{''.join(diffs)}{questions}"},
-            {"role": "assistant", "content": "Format the response so it renders nicely in GitLab, with nice and organized markdown (use code blocks if needed), and send just the response no comments on the request, when answering include a short version of the question, so we know what it is. Finally, translate all responses into Japanese."},
-        ]
+        {"role": "system", "content": (
+            "You are a senior developer reviewing code changes from a commit."
+            " You MUST answer by Japanese."
+        )},
+        {"role": "user", "content": f"{pre_prompt}\n\n{''.join(diffs)}{questions}"},
+        {"role": "assistant", "content": (
+            "Respond in markdown for GitLab. Include concise versions of questions in the response." 
+            " No need to wrap the entire answer in a markdown code block."
+
+        )},
+    ]
+
     logger.info(messages)
     try:
         completions = openai.ChatCompletion.create(
                 deployment_id=os.environ.get("OPENAI_API_MODEL"),
-                model=os.environ.get("OPENAI_API_MODEL") or "gpt-3.5-turbo",
-                temperature=0.7,
+                model=os.environ.get("OPENAI_API_MODEL") or DEFAULT_MODEL,
+                temperature=0.2,
                 stream=False,
                 messages=messages
             )
         answer = completions.choices[0].message["content"].strip()
-        answer += "\n\nFor reference, i was given the following questions: \n"
-        for question in questions.split("\n"):
-            answer += f"\n{question}"
         answer += "\n\nThis comment was generated by an artificial intelligence duck."
         answer += f"\nPrompt:{completions.usage.prompt_tokens} Completion:{completions.usage.completion_tokens} Total:{completions.usage.total_tokens}"
     except Exception as e:
