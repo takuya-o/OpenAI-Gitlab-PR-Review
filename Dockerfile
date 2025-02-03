@@ -10,6 +10,8 @@ RUN pip install -r requirements.txt gunicorn
 COPY main.py .
 
 # https://github.com/GoogleContainerTools/distroless
+# For debug: docker run -it --entrypoint=sh $CI_REGISTRY_IMAGE
+# Version: docker run -it gcr.io/distroless/python3-debian12:debug-nonroot
 FROM gcr.io/distroless/python3-debian12:nonroot
 # python 3.11.2
 COPY --from=build-env /usr/local/lib /usr/local/lib
